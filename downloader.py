@@ -14,6 +14,17 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# ─── Junk URL/filename patterns ───────────────────────────────────────────────
+JUNK_URL_PATTERNS: list[str] = [
+    "/template/", "/form/", "/sample/", "/example/",
+    "/demo/", "/test/", "/dummy/", "login", "register",
+    "signup", "captcha",
+]
+
+JUNK_FILENAME_PATTERNS: list[str] = [
+    "template", "sample", "form", "test", "dummy",
+]
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (compatible; DatasetCrawler/1.0; "
@@ -81,6 +92,30 @@ class FileDownloader:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
+    def _is_junk_url(self, url: str) -> tuple[bool, str]:
+        """
+        Return (is_junk, reason) based on URL/filename pattern checks.
+
+        Rejects URLs that match known junk patterns (templates, login pages,
+        demo/test files) or have unsupported file extensions.
+        """
+        url_lower = url.lower()
+        for pattern in JUNK_URL_PATTERNS:
+            if pattern in url_lower:
+                return True, f"URL contains junk pattern '{pattern}'"
+
+        filename = urlparse(url).path.rsplit("/", 1)[-1].lower()
+        stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+        for pattern in JUNK_FILENAME_PATTERNS:
+            if pattern in stem:
+                return True, f"Filename contains junk pattern '{pattern}'"
+
+        ext = urlparse(url).path.rsplit(".", 1)[-1].lower()
+        if ext not in ("xlsx", "xls", "csv"):
+            return True, f"Extension not allowed: .{ext}"
+
+        return False, ""
+
     def _is_duplicate(self, content: bytes) -> tuple[bool, str]:
         h = hashlib.sha256(content).hexdigest()
         if h in self._seen_hashes:
@@ -94,10 +129,29 @@ class FileDownloader:
         self, url: str, topic: str = "", domain: str = ""
     ) -> DownloadResult:
         """Tải 1 file, validate, lưu disk. Trả về DownloadResult."""
+        # ── Junk URL filter (no network) ──────────────────────────────────────
+        is_junk, reason = self._is_junk_url(url)
+        if is_junk:
+            logger.debug(f"REJECT junk URL {url}: {reason}")
+            return DownloadResult(url=url, success=False, error=f"Junk URL: {reason}")
+
         ext = urlparse(url).path.rsplit(".", 1)[-1].lower()
-        if ext not in ("xlsx", "xls", "csv"):
-            return DownloadResult(url=url, success=False,
-                                  error="URL không có extension xlsx/csv/xls")
+
+        # ── HEAD pre-check (optional: avoid downloading bad content-type) ─────
+        try:
+            async with httpx.AsyncClient(
+                timeout=5.0, follow_redirects=True, headers=HEADERS
+            ) as head_client:
+                head_resp = await head_client.head(url)
+                ct = head_resp.headers.get("content-type", "").split(";")[0].strip()
+                if ct and ct not in ALLOWED_CONTENT_TYPES:
+                    logger.debug(f"REJECT HEAD content-type={ct} for {url}")
+                    return DownloadResult(
+                        url=url, success=False,
+                        error=f"HEAD Content-Type rejected: {ct}",
+                    )
+        except Exception:
+            pass  # HEAD unavailable or failed — proceed to GET
 
         for attempt in range(1, self.max_retries + 1):
             try:

@@ -1,5 +1,5 @@
 """
-Tự động classify lĩnh vực file xlsx/csv.
+Tự động classify file xlsx/csv vào 8 finance sub-categories.
 
 2 chế độ:
   1. Keyword heuristic  — nhanh, không cần API, dùng mặc định
@@ -14,144 +14,79 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-# ─── Keyword map cho từng lĩnh vực ───────────────────────────────────────────
+# ─── Trusted finance domains (boost 1.4x) ────────────────────────────────────
+TRUSTED_DOMAINS: set[str] = {
+    "data.worldbank.org", "imf.org", "afi.org", "ssi.com.vn",
+    "vndirect.com.vn", "cafef.vn", "finance.vietstock.vn",
+    "sbv.gov.vn", "mof.gov.vn", "gso.gov.vn",
+    "cophieu68.vn", "investing.com", "fiingroup.vn",
+}
+
+# ─── Keyword map cho 8 finance sub-categories ─────────────────────────────────
 TOPIC_KEYWORDS: dict[str, list[str]] = {
-    "finance": [
-        "gdp", "inflation", "revenue", "expenditure", "budget", "tax", "fiscal",
-        "debt", "deficit", "interest rate", "exchange rate", "stock", "profit",
-        "loss", "balance sheet", "investment", "fdi", "cpi", "trade balance",
-        "tổng sản phẩm", "tăng trưởng kinh tế", "thu chi ngân sách",
-        "lạm phát", "xuất nhập khẩu", "lãi suất", "tỷ giá", "nợ công",
-        "thu ngân sách", "chỉ số giá tiêu dùng", "doanh thu", "lợi nhuận",
-        "vốn đầu tư", "kim ngạch", "cán cân thương mại", "trái phiếu",
-        "chứng khoán", "vnindex", "hnx", "bội chi", "oda",
-        "dự trữ ngoại hối", "giải ngân", "cung tiền", "tín dụng",
-        "nợ xấu", "giá vàng", "giá xăng", "thuế",
+    "macro_economy": [
+        "gdp", "tăng trưởng kinh tế", "lạm phát", "cpi",
+        "tổng sản phẩm quốc nội", "cán cân vãng lai",
+        "cán cân thương mại", "xuất nhập khẩu",
+        "tài khoản vốn", "chỉ số kinh tế vĩ mô",
+        "gross domestic product", "inflation", "trade balance",
+        "current account", "economic growth",
     ],
-    "health": [
-        "mortality", "morbidity", "disease", "hospital", "patient",
-        "vaccination", "cancer", "diabetes", "hiv", "epidemic",
-        "tử vong", "bệnh viện", "bệnh nhân", "tiêm chủng", "vacxin",
-        "ung thư", "suy dinh dưỡng", "y tế", "dịch bệnh",
-        "tỷ lệ mắc", "giường bệnh", "bác sĩ", "điều dưỡng",
-        "bảo hiểm y tế", "sức khỏe", "tử vong mẹ", "sốt xuất huyết",
-        "lao phổi", "hiv aids", "viêm gan", "tay chân miệng",
-        "covid", "dinh dưỡng", "béo phì", "tiểu đường", "tăng huyết áp",
-        "thương tích", "trạm y tế", "nhân lực y tế", "khám chữa bệnh",
+    "banking_credit": [
+        "tín dụng", "lãi suất", "ngân hàng", "nhnn",
+        "ngân hàng nhà nước", "nợ xấu", "room tín dụng",
+        "huy động vốn", "cho vay", "tỷ lệ nợ",
+        "bảo hiểm tiền gửi", "thanh khoản ngân hàng",
+        "credit", "interest rate", "bank", "non-performing loan",
+        "deposit", "lending",
     ],
-    "education": [
-        "student", "enrollment", "school", "university", "literacy",
-        "dropout", "teacher", "exam", "scholarship",
-        "học sinh", "sinh viên", "nhập học", "trường học",
-        "đại học", "cao đẳng", "tỷ lệ bỏ học", "giáo viên",
-        "điểm thi", "tốt nghiệp", "học bổng", "phổ cập giáo dục",
-        "chi ngân sách giáo dục", "biết chữ", "thpt", "tiểu học",
-        "mầm non", "lưu ban", "dạy nghề", "đào tạo nghề",
-        "tuyển sinh", "điểm chuẩn", "lớp học", "phòng học",
+    "stock_market": [
+        "vnindex", "hnx", "upcom", "cổ phiếu", "chứng khoán",
+        "khối lượng giao dịch", "vốn hóa thị trường",
+        "p/e ratio", "ipo", "niêm yết",
+        "nhà đầu tư nước ngoài", "room ngoại",
+        "stock", "equity", "market cap", "share price",
+        "trading volume", "listed", "foreign investor",
     ],
-    "environment": [
-        "emission", "co2", "carbon", "climate", "pollution",
-        "deforestation", "biodiversity", "renewable", "waste",
-        "khí thải", "ô nhiễm", "môi trường", "biến đổi khí hậu",
-        "diện tích rừng", "chất lượng không khí", "aqi", "pm2.5",
-        "nước thải", "rác thải", "năng lượng tái tạo",
-        "đa dạng sinh học", "lũ lụt", "hạn hán", "sạt lở",
-        "xâm nhập mặn", "tài nguyên nước", "nhiệt độ", "lượng mưa",
-        "san hô", "khu bảo tồn", "thiên tai", "bão",
+    "corporate_finance": [
+        "doanh thu", "lợi nhuận", "ebitda", "báo cáo tài chính",
+        "bảng cân đối kế toán", "dòng tiền", "vốn chủ sở hữu",
+        "roe", "roa", "tỷ suất lợi nhuận", "kết quả kinh doanh",
+        "revenue", "profit", "balance sheet", "cash flow",
+        "equity", "financial statement", "earnings",
     ],
-    "demographics": [
-        "population", "census", "migration", "urbanization",
-        "household", "poverty", "employment", "unemployment",
-        "dân số", "điều tra dân số", "di cư", "đô thị hóa",
-        "hộ gia đình", "tỷ lệ nghèo", "việc làm", "thất nghiệp",
-        "lực lượng lao động", "già hóa dân số", "mật độ dân số",
-        "tỷ lệ sinh", "tuổi thọ", "tỷ số giới tính", "hộ khẩu",
-        "xuất khẩu lao động", "kiều hối", "thu nhập bình quân",
-        "hộ nghèo", "chuẩn nghèo", "lao động phi chính thức",
+    "fiscal_budget": [
+        "ngân sách nhà nước", "thu ngân sách", "chi ngân sách",
+        "bội chi", "thuế gtgt", "thuế tndn",
+        "thuế thu nhập", "nợ công",
+        "trái phiếu chính phủ", "bộ tài chính",
+        "budget", "tax", "fiscal deficit", "public debt",
+        "government revenue", "government expenditure",
     ],
-    "agriculture": [
-        "crop", "harvest", "yield", "livestock", "fishery",
-        "fertilizer", "irrigation", "agricultural",
-        "lúa gạo", "sản lượng", "nông sản", "thủy sản",
-        "chăn nuôi", "gia súc", "phân bón", "tưới tiêu",
-        "cà phê", "cao su", "tôm", "cá tra", "rau quả",
-        "diện tích canh tác", "an ninh lương thực", "gieo trồng",
-        "năng suất", "hợp tác xã", "lâm sản", "gỗ khai thác",
-        "thủy lợi", "gia cầm", "nông nghiệp",
+    "forex_rates": [
+        "tỷ giá", "usd vnd", "eur vnd", "dự trữ ngoại hối",
+        "can thiệp tỷ giá", "ngoại tệ", "swift",
+        "thanh toán quốc tế", "nhnn tỷ giá",
+        "exchange rate", "foreign reserves", "forex",
+        "currency", "usd", "vnd",
     ],
-    "transport": [
-        "traffic", "accident", "vehicle", "aviation", "shipping",
-        "freight", "railway", "port", "logistics",
-        "tai nạn giao thông", "phương tiện", "hàng không",
-        "cảng biển", "đường sắt", "vận tải", "hàng hóa",
-        "hành khách", "hạ tầng giao thông", "xe máy", "ô tô",
-        "container", "đường cao tốc", "quốc lộ",
-        "đăng kiểm", "xe buýt", "tàu hỏa", "sân bay",
+    "investment_fund": [
+        "quỹ đầu tư", "etf", "fdi", "vốn đầu tư nước ngoài",
+        "vốn oda", "quỹ mở", "chứng chỉ quỹ",
+        "danh mục đầu tư", "tài sản ròng", "nav",
+        "fund", "investment", "foreign direct investment",
+        "portfolio", "net asset value",
     ],
-    "energy": [
-        "electricity", "power", "oil", "gas", "coal",
-        "renewable energy", "kwh", "megawatt",
-        "điện năng", "tiêu thụ điện", "sản lượng điện",
-        "dầu khí", "than đá", "năng lượng mặt trời",
-        "điện gió", "evn", "giá điện", "công suất lắp đặt",
-        "thủy điện", "nhiệt điện", "điện áp mái",
-        "petrovietnam", "vinacomin", "lọc dầu",
-        "phát điện", "truyền tải điện",
-    ],
-    "technology": [
-        "internet", "broadband", "digital", "ict", "patent",
-        "innovation", "e-commerce", "startup",
-        "người dùng internet", "thuê bao di động", "thương mại điện tử",
-        "chuyển đổi số", "công nghệ thông tin", "khởi nghiệp",
-        "băng thông rộng", "an toàn thông tin", "chỉ số ict",
-        "fintech", "ví điện tử", "thanh toán số",
-        "shopee", "lazada", "tiki", "momo", "zalopay",
-        "4g", "5g", "phần mềm", "outsourcing", "fpt", "viettel",
-    ],
-    "social": [
-        "crime", "inequality", "gini", "welfare",
-        "social security", "corruption",
-        "tội phạm", "bất bình đẳng", "an sinh xã hội",
-        "bảo trợ xã hội", "hộ nghèo", "cận nghèo",
-        "bình đẳng giới", "dân tộc thiểu số", "hdi",
-        "phúc lợi", "trẻ em", "người cao tuổi",
-        "bảo hiểm xã hội", "lương hưu", "ma túy",
-        "bạo lực gia đình", "người khuyết tật",
-        "văn hóa thể thao", "di sản",
-    ],
-    "business": [
-        "enterprise", "business registration", "industrial output",
-        "retail sales", "trade volume",
-        "doanh nghiệp", "thành lập", "giải thể", "phá sản",
-        "kim ngạch", "xuất khẩu", "nhập khẩu",
-        "chỉ số iip", "sản xuất công nghiệp",
-        "bán lẻ", "đăng ký kinh doanh", "sme",
-        "khu công nghiệp", "khu chế xuất",
-        "dệt may", "da giày", "linh kiện điện tử",
-        "du lịch khách sạn", "doanh thu dịch vụ",
-        "cổ phần hóa", "doanh nghiệp nhà nước",
-    ],
-    "land_urban": [
-        "land use", "real estate", "housing market", "urban planning",
-        "đất đai", "sử dụng đất", "quy hoạch đất",
-        "bất động sản", "nhà ở", "chung cư", "căn hộ",
-        "giá đất", "thu hồi đất", "giải phóng mặt bằng",
-        "sổ đỏ", "sổ hồng", "cấp giấy chứng nhận",
-        "đô thị", "quy hoạch đô thị", "hạ tầng kỹ thuật",
-        "thoát nước", "cây xanh đô thị",
-        "nhà ở xã hội", "nhà ở công nhân",
-    ],
-    "public_admin": [
-        "public administration", "governance", "competitiveness",
-        "cải cách hành chính", "dịch vụ công",
-        "pci", "năng lực cạnh tranh tỉnh", "papi",
-        "biên chế công chức", "thủ tục hành chính",
-        "ngân sách tỉnh", "thu chi địa phương",
-        "tòa án", "xét xử", "thi hành án",
-        "đảng viên", "hội đồng nhân dân",
-        "bầu cử", "kiểm tra thanh tra",
+    "debt_bond": [
+        "trái phiếu doanh nghiệp", "trái phiếu chính phủ",
+        "lợi suất trái phiếu", "phát hành trái phiếu",
+        "thị trường nợ", "kỳ hạn", "coupon", "yield curve",
+        "bond", "corporate bond", "government bond",
+        "yield", "maturity", "debt market",
     ],
 }
+
+VALID_TOPICS = list(TOPIC_KEYWORDS.keys())
 
 
 @dataclass
@@ -163,17 +98,31 @@ class ClassificationResult:
     rationale: str = ""
 
 
+def _is_trusted_domain(source_domain: str) -> bool:
+    """Return True if source_domain matches any entry in TRUSTED_DOMAINS."""
+    return any(td in source_domain for td in TRUSTED_DOMAINS)
+
+
 def classify_heuristic(
     columns: list[str],
     sample_values: dict[str, list],
     filename: str = "",
     existing_topic: str = "",
+    source_domain: str = "",
 ) -> ClassificationResult:
     """
     Classify dựa trên tên cột, giá trị mẫu, và tên file.
-    Trả về ClassificationResult với topic và confidence.
+
+    Args:
+        columns:        tên các cột trong file
+        sample_values:  dict col → [val1, val2, ...]
+        filename:       tên file
+        existing_topic: topic hint từ query (tăng điểm nếu khớp)
+        source_domain:  domain nguồn file (nếu là trusted domain → boost 1.4x)
+
+    Returns:
+        ClassificationResult với topic và confidence.
     """
-    # Gộp tất cả text để match keyword
     text_parts = [filename.lower()]
     for col in columns:
         text_parts.append(col.lower())
@@ -184,17 +133,18 @@ def classify_heuristic(
     scores: dict[str, float] = {}
     for topic, keywords in TOPIC_KEYWORDS.items():
         hits = sum(1 for kw in keywords if kw in combined)
-        scores[topic] = hits / len(keywords)  # normalize
+        scores[topic] = hits / len(keywords)
 
-    # Boost nếu existing_topic từ query đã khớp
     if existing_topic and existing_topic in scores:
         scores[existing_topic] *= 1.4
 
     best_topic = max(scores, key=scores.get)
     best_score = scores[best_topic]
 
-    # Normalize confidence to 0-1 với cap hợp lý
-    confidence = min(best_score * 8, 1.0)  # ~12.5% keywords hit = confidence 1.0
+    confidence = min(best_score * 8, 1.0)
+
+    if _is_trusted_domain(source_domain):
+        confidence = min(confidence * 1.4, 1.0)
 
     return ClassificationResult(
         topic=best_topic if confidence > 0.05 else "misc",
@@ -212,6 +162,9 @@ async def classify_with_llm(
     """
     Dùng Claude API để classify khi heuristic confidence thấp.
     Cần ANTHROPIC_API_KEY trong env.
+
+    Returns:
+        ClassificationResult với topic là một trong 8 sub-category names.
     """
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
@@ -224,7 +177,8 @@ async def classify_with_llm(
         sample_preview = {
             col: vals[:2] for col, vals in list(sample_values.items())[:8]
         }
-        prompt = f"""Phân tích file dữ liệu sau và xác định lĩnh vực chính:
+        valid_topics_str = "|".join(VALID_TOPICS)
+        prompt = f"""Phân tích file dữ liệu tài chính Việt Nam sau và xác định sub-category chính:
 
 Tên file: {filename}
 Các cột: {', '.join(columns[:20])}
@@ -232,7 +186,7 @@ Dữ liệu mẫu: {json.dumps(sample_preview, ensure_ascii=False)[:800]}
 
 Trả về JSON (chỉ JSON, không thêm gì):
 {{
-  "topic": "<một trong: finance|health|education|environment|demographics|agriculture|transport|energy|technology|social|misc>",
+  "topic": "<một trong: {valid_topics_str}>",
   "confidence": <0.0-1.0>,
   "rationale": "<1 câu giải thích>"
 }}"""
@@ -255,8 +209,12 @@ Trả về JSON (chỉ JSON, không thêm gì):
             content = resp.json()["content"][0]["text"]
             parsed = json.loads(content)
 
+        topic = parsed.get("topic", "misc")
+        if topic not in VALID_TOPICS:
+            topic = "misc"
+
         return ClassificationResult(
-            topic=parsed.get("topic", "misc"),
+            topic=topic,
             confidence=float(parsed.get("confidence", 0.5)),
             method="llm",
             rationale=parsed.get("rationale", ""),
@@ -268,21 +226,24 @@ Trả về JSON (chỉ JSON, không thêm gì):
 
 
 async def classify_file(
-    meta,  # FileMetadata
+    meta,                          # FileMetadata
     use_llm_threshold: float = 0.2,
+    source_domain: str = "",
 ) -> ClassificationResult:
     """
     Classify 1 file. Nếu heuristic confidence < threshold thì dùng LLM.
 
     Args:
-        meta: FileMetadata từ validator
-        use_llm_threshold: confidence tối thiểu để dùng heuristic;
-                           thấp hơn → gọi LLM
+        meta:               FileMetadata từ validator
+        use_llm_threshold:  confidence tối thiểu để dùng heuristic;
+                            thấp hơn → gọi LLM
+        source_domain:      domain URL nguồn (trusted domain → boost confidence)
     """
     result = classify_heuristic(
         columns=meta.columns,
         sample_values=meta.sample_values,
         filename=meta.filepath.name,
+        source_domain=source_domain,
     )
 
     if result.confidence < use_llm_threshold and os.getenv("ANTHROPIC_API_KEY"):
