@@ -5,6 +5,7 @@ Async downloader: tải file xlsx/csv, validate, dedup theo content hash.
 import asyncio
 import hashlib
 import logging
+import random
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -65,17 +66,23 @@ class FileDownloader:
         timeout:     timeout mỗi request (giây)
         max_retries: số lần retry khi lỗi mạng
         concurrency: số download song song
+        proxies:     list proxy URL (http://user:pwd@ip:port), rotate random
     """
     output_dir: Path = Path("output/files")
     timeout: float = 30.0
     max_retries: int = 3
     concurrency: int = 5
+    proxies: list[str] = field(default_factory=list)
 
     # Internal state
     _seen_hashes: set[str] = field(default_factory=set, init=False, repr=False)
 
     def __post_init__(self):
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def _pick_proxy(self) -> str | None:
+        """Chọn random 1 proxy URL từ danh sách."""
+        return random.choice(self.proxies) if self.proxies else None
         self._seen_hashes = set()
 
     # ── helpers ──────────────────────────────────────────────────────────────
@@ -137,10 +144,13 @@ class FileDownloader:
 
         ext = urlparse(url).path.rsplit(".", 1)[-1].lower()
 
+        proxy = self._pick_proxy()
+
         # ── HEAD pre-check (optional: avoid downloading bad content-type) ─────
         try:
             async with httpx.AsyncClient(
-                timeout=5.0, follow_redirects=True, headers=HEADERS
+                timeout=5.0, follow_redirects=True, headers=HEADERS,
+                proxy=proxy,
             ) as head_client:
                 head_resp = await head_client.head(url)
                 ct = head_resp.headers.get("content-type", "").split(";")[0].strip()
@@ -159,6 +169,7 @@ class FileDownloader:
                     timeout=self.timeout,
                     follow_redirects=True,
                     headers=HEADERS,
+                    proxy=proxy,
                 ) as client:
                     async with client.stream("GET", url) as resp:
                         resp.raise_for_status()

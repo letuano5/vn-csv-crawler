@@ -120,12 +120,11 @@ async def run_pipeline(
         engines=["google"],
         language="vi",
         max_results=10,
-        proxies=proxies,
     )
     logger.info(f"Searching via SearXNG @ {searxng_url} (chunked pipeline) ...")
 
     # ── 3. Download ───────────────────────────────────────────────────────────
-    downloader = FileDownloader(output_dir=OUTPUT_DIR, concurrency=5)
+    downloader = FileDownloader(output_dir=OUTPUT_DIR, concurrency=5, proxies=proxies)
 
     # ── 4–6. Validate → Classify → Catalog ───────────────────────────────────
     db = CatalogDB(CATALOG_DB)

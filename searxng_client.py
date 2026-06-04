@@ -77,14 +77,6 @@ class SearXNGClient:
     backoff_base: float = 1.0
     backoff_cap: float = 20.0
     jitter_ratio: float = 0.35
-    proxies: list[str] = field(default_factory=list)
-
-    def _pick_proxy(self) -> dict | None:
-        """Chọn random 1 proxy từ danh sách, trả về dict cho httpx."""
-        if not self.proxies:
-            return None
-        proxy_url = random.choice(self.proxies)
-        return {"http://": proxy_url, "https://": proxy_url}
 
     def _retry_sleep_seconds(self, attempt: int) -> float:
         """Exponential backoff có jitter để tránh burst đồng bộ."""
@@ -110,10 +102,7 @@ class SearXNGClient:
             "X-Forwarded-For": "127.0.0.1",
             "X-Real-IP": "127.0.0.1",
         }
-        async with httpx.AsyncClient(
-            timeout=self.timeout,
-            proxies=self._pick_proxy(),
-        ) as client:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
             for attempt in range(1, self.max_retries + 1):
                 try:
                     resp = await client.get(url, headers=headers)
