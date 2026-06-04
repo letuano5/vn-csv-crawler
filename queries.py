@@ -155,17 +155,6 @@ def build_queries(
                     "lang":         "vi",
                 })
 
-            # ── Trusted finance domain queries ────────────────────────────────
-            for kw in vi_kws[:trusted_domain_kw_limit]:
-                for domain in TRUSTED_FINANCE_DOMAINS:
-                    queries.append({
-                        "query":        f"{ft} {kw} site:{domain}",
-                        "topic":        topic_name,
-                        "filetype":     ft_ext,
-                        "domain_group": "trusted_finance",
-                        "lang":         "vi",
-                    })
-
     return queries
 
 

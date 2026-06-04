@@ -53,7 +53,7 @@ async def run_pipeline(
     resume: bool = False,
     dry_run: bool = False,
     lang: str = "vi",
-    delay: float = 15.0,
+    delay: float = 5.0,
     min_quality: float = 0.5,
 ):
     """
@@ -246,7 +246,7 @@ def parse_args():
     )
     p.add_argument(
         "--delay", type=float, default=15.0,
-        help="Delay (giây) giữa các search request (default: 15.0)",
+        help="Delay (giây) giữa các search request (default: 5.0)",
     )
     p.add_argument(
         "--min-quality", type=float, default=0.5,

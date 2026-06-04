@@ -152,7 +152,7 @@ class SearXNGClient:
         self,
         queries: list[dict],
         concurrency: int = 1,
-        delay: float = 15.0,
+        delay: float = 5.0,
         chunk_size: int = 200,
         chunk_pause: float = 8.0,
     ) -> list[SearchResult]:
@@ -168,7 +168,7 @@ class SearXNGClient:
         """
         # Yêu cầu vận hành: luôn chạy tuần tự và giữ tối thiểu 15s giữa hai query.
         concurrency = 1
-        delay = max(delay, 15.0)
+        delay = max(delay, 5.0)
 
         sem = asyncio.Semaphore(concurrency)
         all_results: list[SearchResult] = []
