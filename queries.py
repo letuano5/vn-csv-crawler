@@ -107,7 +107,7 @@ def build_queries(
     domains: list[str] | None = None,
     lang: str = "vi",
     max_per_topic: int = 1000,
-    trusted_domain_kw_limit: int = 3,
+    trusted_domain_kw_limit: int = 1,
 ) -> list[dict]:
     """
     Sinh danh sách query dict cho từng finance sub-category.
