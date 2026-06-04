@@ -31,7 +31,7 @@ logger = logging.getLogger("main")
 
 # ── Imports ───────────────────────────────────────────────────────────────────
 from queries import build_queries, get_quick_queries, TOPICS
-from searxng_client import SearXNGClient
+from searxng_client import SearXNGClient, load_proxies
 from downloader import FileDownloader
 from validator import validate_file
 from classifier import classify_file
@@ -55,6 +55,7 @@ async def run_pipeline(
     lang: str = "vi",
     delay: float = 5.0,
     min_quality: float = 0.5,
+    proxy_file: str | None = None,
 ):
     """
     Full pipeline:
@@ -113,11 +114,13 @@ async def run_pipeline(
         return
 
     # ── 2. Search ─────────────────────────────────────────────────────────────
+    proxies = load_proxies(proxy_file) if proxy_file else []
     searxng = SearXNGClient(
         base_url=searxng_url,
         engines=["google"],
         language="vi",
         max_results=10,
+        proxies=proxies,
     )
     logger.info(f"Searching via SearXNG @ {searxng_url} (chunked pipeline) ...")
 
@@ -253,6 +256,10 @@ def parse_args():
         help="Ngưỡng quality_score tối thiểu để lưu file (0.0–1.0, default: 0.5)",
     )
     p.add_argument(
+        "--proxy-file", default=None,
+        help="Đường dẫn file proxy (format: ip:port:user:password, mỗi dòng 1 proxy)",
+    )
+    p.add_argument(
         "--dry-run", action="store_true",
         help="Chỉ in query, không tải file",
     )
@@ -271,4 +278,5 @@ if __name__ == "__main__":
         lang=args.lang,
         delay=args.delay,
         min_quality=args.min_quality,
+        proxy_file=args.proxy_file,
     ))
