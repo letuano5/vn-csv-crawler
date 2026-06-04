@@ -182,6 +182,16 @@ async def run_pipeline(
                 cls = await classify_file(
                     meta, use_llm_threshold=0.2, source_domain=dl.domain
                 )
+
+                # Di chuyển file vào đúng thư mục theo sub_category
+                correct_dir = OUTPUT_DIR / cls.topic
+                correct_dir.mkdir(parents=True, exist_ok=True)
+                new_path = correct_dir / dl.filepath.name
+                if dl.filepath != new_path:
+                    dl.filepath.rename(new_path)
+                    dl.filepath = new_path
+                    meta.filepath = new_path
+
                 logger.info(
                     f"  {dl.filepath.name} → [{cls.topic}] "
                     f"conf={cls.confidence:.2f} score={meta.quality_score:.2f} ({cls.method})"
