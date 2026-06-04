@@ -143,40 +143,6 @@ def _compute_quality_score(df) -> float:
     )
 
 
-def _try_fix_header(filepath: Path, df):
-    """
-    Nếu DataFrame có vấn đề header (merged-cell title hoặc toàn Unnamed),
-    quét tối đa 20 row đầu để tìm row thực sự là header.
-
-    Tiêu chí: row có >= 3 giá trị non-NaN, và kết quả có nhiều cột
-    có-nghĩa hơn lần đọc mặc định.
-
-    Trả về DataFrame tốt hơn nếu tìm được, ngược lại trả về df gốc.
-    """
-    col_names = [str(c) for c in df.columns]
-    if not _is_merged_cell_header(col_names) and not all(_is_generic_col(c) for c in col_names):
-        return df  # không cần fix
-
-    meaningful_orig = sum(1 for c in col_names if not _is_generic_col(c))
-
-    try:
-        df_raw = pd.read_excel(filepath, header=None, nrows=20)
-        for i, row in df_raw.iterrows():
-            if row.notna().sum() < 3:
-                continue
-            try:
-                df_alt = pd.read_excel(filepath, header=int(i), nrows=1000)
-                alt_cols = [str(c) for c in df_alt.columns]
-                meaningful_alt = sum(1 for c in alt_cols if not _is_generic_col(c))
-                if meaningful_alt > meaningful_orig:
-                    return df_alt
-            except Exception:
-                continue
-    except Exception:
-        pass
-
-    return df
-
 
 def validate_file(filepath: Path) -> FileMetadata:
     """
@@ -203,7 +169,6 @@ def validate_file(filepath: Path) -> FileMetadata:
     try:
         if ext in ("xlsx", "xls"):
             df = pd.read_excel(filepath, nrows=1000)
-            df = _try_fix_header(filepath, df)
         elif ext == "csv":
             df, enc = _read_csv_smart(filepath)
             meta.encoding = enc
