@@ -5,36 +5,45 @@ Lưu metadata vào SQLite + export JSONL cho training pipeline.
 import json
 import logging
 import sqlite3
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA = """
+_TABLE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    url           TEXT UNIQUE NOT NULL,
-    filepath      TEXT,
-    content_hash  TEXT,
-    filetype      TEXT,
-    file_size_kb  REAL,
-    n_rows        INTEGER,
-    n_cols        INTEGER,
-    columns_json  TEXT,       -- JSON array tên cột
-    sample_json   TEXT,       -- JSON object col→[vals]
-    topic         TEXT,
-    confidence    REAL,
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    url             TEXT UNIQUE NOT NULL,
+    filepath        TEXT,
+    content_hash    TEXT,
+    filetype        TEXT,
+    file_size_kb    REAL,
+    n_rows          INTEGER,
+    n_cols          INTEGER,
+    columns_json    TEXT,       -- JSON array tên cột
+    sample_json     TEXT,       -- JSON object col→[vals]
+    topic           TEXT,       -- parent category (always "finance")
+    sub_category    TEXT,       -- one of the 8 finance sub-categories
+    confidence      REAL,
+    quality_score   REAL,
     classify_method TEXT,
-    domain        TEXT,
-    query         TEXT,
-    crawled_at    TEXT,
-    valid         INTEGER     -- 0/1
+    domain          TEXT,
+    query           TEXT,
+    crawled_at      TEXT,
+    valid           INTEGER     -- 0/1
 );
-
-CREATE INDEX IF NOT EXISTS idx_topic ON files(topic);
-CREATE INDEX IF NOT EXISTS idx_hash  ON files(content_hash);
 """
+
+_INDEX_SCHEMA = """
+CREATE INDEX IF NOT EXISTS idx_sub_category ON files(sub_category);
+CREATE INDEX IF NOT EXISTS idx_hash         ON files(content_hash);
+"""
+
+# Columns added after initial schema — applied via ALTER TABLE if missing.
+_MIGRATION_COLUMNS: list[tuple[str, str]] = [
+    ("sub_category",  "TEXT"),
+    ("quality_score", "REAL"),
+]
 
 
 class CatalogDB:
@@ -50,9 +59,20 @@ class CatalogDB:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        self._conn.executescript(SCHEMA)
+        self._conn.executescript(_TABLE_SCHEMA)
+        self._migrate()
+        self._conn.executescript(_INDEX_SCHEMA)
         self._conn.commit()
         logger.info(f"CatalogDB opened: {db_path}")
+
+    def _migrate(self) -> None:
+        """Add new columns to an existing DB if they are missing."""
+        for col, coldef in _MIGRATION_COLUMNS:
+            try:
+                self._conn.execute(f"ALTER TABLE files ADD COLUMN {col} {coldef}")
+                logger.debug(f"Migration: added column {col} {coldef}")
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
     def insert(
         self,
@@ -69,10 +89,10 @@ class CatalogDB:
                 INSERT OR IGNORE INTO files
                   (url, filepath, content_hash, filetype, file_size_kb,
                    n_rows, n_cols, columns_json, sample_json,
-                   topic, confidence, classify_method,
+                   topic, sub_category, confidence, quality_score, classify_method,
                    domain, query, crawled_at, valid)
                 VALUES
-                  (?,?,?,?,?, ?,?,?,?, ?,?,?, ?,?,?,?)
+                  (?,?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?,?,?)
                 """,
                 (
                     download_result.url,
@@ -84,11 +104,13 @@ class CatalogDB:
                     file_meta.n_cols,
                     json.dumps(file_meta.columns, ensure_ascii=False),
                     json.dumps(file_meta.sample_values, ensure_ascii=False),
-                    classify_result.topic,
+                    "finance",                  # parent topic
+                    classify_result.topic,      # sub_category
                     classify_result.confidence,
+                    file_meta.quality_score,
                     classify_result.method,
                     download_result.domain,
-                    "",  # query — filled separately if needed
+                    download_result.query,
                     datetime.utcnow().isoformat(),
                     int(file_meta.valid),
                 ),
@@ -99,25 +121,27 @@ class CatalogDB:
             return False
 
     def stats(self) -> dict:
-        """Thống kê nhanh về catalog."""
+        """Thống kê nhanh về catalog, grouped by sub_category."""
         cur = self._conn.execute("""
-            SELECT topic, COUNT(*) as cnt,
+            SELECT sub_category, COUNT(*) as cnt,
                    SUM(n_rows) as total_rows,
                    SUM(file_size_kb)/1024 as total_mb
             FROM files WHERE valid=1
-            GROUP BY topic ORDER BY cnt DESC
+            GROUP BY sub_category ORDER BY cnt DESC
         """)
         rows = [dict(r) for r in cur.fetchall()]
         total = self._conn.execute(
             "SELECT COUNT(*) FROM files"
         ).fetchone()[0]
-        return {"total_files": total, "by_topic": rows}
+        return {"total_files": total, "by_category": rows}
 
     def export_jsonl(self, output_path: Path, valid_only: bool = True) -> int:
         """
         Export toàn bộ catalog ra JSONL để dùng trong training pipeline.
         Mỗi dòng là 1 JSON record.
-        Trả về số record đã xuất.
+
+        Returns:
+            số record đã xuất.
         """
         where = "WHERE valid=1" if valid_only else ""
         cur = self._conn.execute(f"SELECT * FROM files {where}")
@@ -127,7 +151,6 @@ class CatalogDB:
         with output_path.open("w", encoding="utf-8") as f:
             for row in rows:
                 record = dict(row)
-                # Parse lại JSON string
                 try:
                     record["columns"] = json.loads(record.pop("columns_json", "[]"))
                     record["sample_values"] = json.loads(record.pop("sample_json", "{}"))

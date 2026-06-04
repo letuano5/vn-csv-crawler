@@ -1,0 +1,6 @@
+httpx
+pandas
+openpyxl
+aiofiles
+aiohttp
+python-dotenv

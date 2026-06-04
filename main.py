@@ -10,8 +10,12 @@ Usage:
 import argparse
 import asyncio
 import logging
+import random
 import sys
 from pathlib import Path
+
+from dotenv import load_dotenv
+load_dotenv()
 
 # ── Setup logging ─────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -27,7 +31,7 @@ logger = logging.getLogger("main")
 
 # ── Imports ───────────────────────────────────────────────────────────────────
 from queries import build_queries, get_quick_queries, TOPICS
-from searxng_client import SearXNGClient
+from searxng_client import SearXNGClient, load_proxies
 from downloader import FileDownloader
 from validator import validate_file
 from classifier import classify_file
@@ -49,6 +53,9 @@ async def run_pipeline(
     resume: bool = False,
     dry_run: bool = False,
     lang: str = "vi",
+    delay: float = 5.0,
+    min_quality: float = 0.5,
+    proxy_file: str | None = None,
 ):
     """
     Full pipeline:
@@ -81,7 +88,6 @@ async def run_pipeline(
     )
 
     if limit_queries:
-        import random
         random.shuffle(queries)
         queries = queries[:limit_queries]
 
@@ -108,6 +114,7 @@ async def run_pipeline(
         return
 
     # ── 2. Search ─────────────────────────────────────────────────────────────
+    proxies = load_proxies(proxy_file) if proxy_file else []
     searxng = SearXNGClient(
         base_url=searxng_url,
         engines=["google"],
@@ -117,7 +124,7 @@ async def run_pipeline(
     logger.info(f"Searching via SearXNG @ {searxng_url} (chunked pipeline) ...")
 
     # ── 3. Download ───────────────────────────────────────────────────────────
-    downloader = FileDownloader(output_dir=OUTPUT_DIR, concurrency=5)
+    downloader = FileDownloader(output_dir=OUTPUT_DIR, concurrency=5, proxies=proxies)
 
     # ── 4–6. Validate → Classify → Catalog ───────────────────────────────────
     db = CatalogDB(CATALOG_DB)
@@ -139,7 +146,7 @@ async def run_pipeline(
         search_results = await searxng.search_batch(
             chunk,
             concurrency=1,
-            delay=15.0,
+            delay=delay,
             chunk_size=len(chunk),
             chunk_pause=0.0,
         )
@@ -158,14 +165,36 @@ async def run_pipeline(
                 meta = validate_file(dl.filepath)
                 if not meta.valid:
                     logger.debug(f"  INVALID {dl.filepath.name}: {meta.error}")
+                    dl.filepath.unlink(missing_ok=True)
+                    continue
+
+                # Quality gate
+                if meta.quality_score < min_quality:
+                    logger.debug(
+                        f"  LOW QUALITY {dl.filepath.name}: "
+                        f"score={meta.quality_score:.2f} < {min_quality}"
+                    )
+                    dl.filepath.unlink(missing_ok=True)
                     continue
                 validated_total += 1
 
                 # Classify
-                cls = await classify_file(meta, use_llm_threshold=0.2)
+                cls = await classify_file(
+                    meta, use_llm_threshold=0.2, source_domain=dl.domain
+                )
+
+                # Di chuyển file vào đúng thư mục theo sub_category
+                correct_dir = OUTPUT_DIR / cls.topic
+                correct_dir.mkdir(parents=True, exist_ok=True)
+                new_path = correct_dir / dl.filepath.name
+                if dl.filepath != new_path:
+                    dl.filepath.rename(new_path)
+                    dl.filepath = new_path
+                    meta.filepath = new_path
+
                 logger.info(
                     f"  {dl.filepath.name} → [{cls.topic}] "
-                    f"conf={cls.confidence:.2f} ({cls.method})"
+                    f"conf={cls.confidence:.2f} score={meta.quality_score:.2f} ({cls.method})"
                 )
 
                 # Save
@@ -181,12 +210,10 @@ async def run_pipeline(
 
     # ── 7. Export JSONL ───────────────────────────────────────────────────────
     n = db.export_jsonl(JSONL_EXPORT)
-    db.close()
 
     # ── Summary ───────────────────────────────────────────────────────────────
-    db2 = CatalogDB(CATALOG_DB)
-    stats = db2.stats()
-    db2.close()
+    stats = db.stats()
+    db.close()
 
     logger.info("")
     logger.info("─── SUMMARY ─────────────────────────────────")
@@ -195,10 +222,10 @@ async def run_pipeline(
     logger.info(f"Files validated          : {validated_total}")
     logger.info(f"Total files in catalog : {stats['total_files']}")
     logger.info(f"JSONL export           : {JSONL_EXPORT} ({n} records)")
-    logger.info("By topic:")
-    for row in stats["by_topic"]:
+    logger.info("By sub-category:")
+    for row in stats["by_category"]:
         logger.info(
-            f"  {row['topic']:<16} {row['cnt']:>4} files  "
+            f"  {row['sub_category']:<20} {row['cnt']:>4} files  "
             f"{row['total_rows'] or 0:>8,} rows  "
             f"{(row['total_mb'] or 0):.1f} MB"
         )
@@ -232,6 +259,18 @@ def parse_args():
         help="Ngôn ngữ keyword: vi (bắt buộc)",
     )
     p.add_argument(
+        "--delay", type=float, default=15.0,
+        help="Delay (giây) giữa các search request (default: 5.0)",
+    )
+    p.add_argument(
+        "--min-quality", type=float, default=0.5,
+        help="Ngưỡng quality_score tối thiểu để lưu file (0.0–1.0, default: 0.5)",
+    )
+    p.add_argument(
+        "--proxy-file", default=None,
+        help="Đường dẫn file proxy (format: ip:port:user:password, mỗi dòng 1 proxy)",
+    )
+    p.add_argument(
         "--dry-run", action="store_true",
         help="Chỉ in query, không tải file",
     )
@@ -248,4 +287,7 @@ if __name__ == "__main__":
         resume=args.resume,
         dry_run=args.dry_run,
         lang=args.lang,
+        delay=args.delay,
+        min_quality=args.min_quality,
+        proxy_file=args.proxy_file,
     ))
