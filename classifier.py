@@ -3,7 +3,7 @@ Tự động classify file xlsx/csv vào 8 finance sub-categories.
 
 2 chế độ:
   1. Keyword heuristic  — nhanh, không cần API, dùng mặc định
-  2. LLM-assisted       — dùng khi heuristic confidence thấp (cần ANTHROPIC_API_KEY)
+  2. LLM-assisted       — dùng khi heuristic confidence thấp (cần DEEPSEEK_API_KEY)
 """
 
 import json
@@ -160,15 +160,15 @@ async def classify_with_llm(
     filename: str = "",
 ) -> ClassificationResult:
     """
-    Dùng Claude API để classify khi heuristic confidence thấp.
-    Cần ANTHROPIC_API_KEY trong env.
+    Dùng DeepSeek API để classify khi heuristic confidence thấp.
+    Cần DEEPSEEK_API_KEY trong env.
 
     Returns:
         ClassificationResult với topic là một trong 8 sub-category names.
     """
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
-        logger.warning("ANTHROPIC_API_KEY không có, fallback về heuristic")
+        logger.warning("DEEPSEEK_API_KEY không có, fallback về heuristic")
         return classify_heuristic(columns, sample_values, filename)
 
     try:
@@ -193,20 +193,20 @@ Trả về JSON (chỉ JSON, không thêm gì):
 
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
+                "https://api.deepseek.com/v1/chat/completions",
                 headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
                 },
                 json={
-                    "model": "claude-haiku-4-5-20251001",
+                    "model": "deepseek-chat",
                     "max_tokens": 200,
                     "messages": [{"role": "user", "content": prompt}],
+                    "response_format": {"type": "json_object"},
                 },
             )
             resp.raise_for_status()
-            content = resp.json()["content"][0]["text"]
+            content = resp.json()["choices"][0]["message"]["content"]
             parsed = json.loads(content)
 
         topic = parsed.get("topic", "misc")
@@ -246,7 +246,7 @@ async def classify_file(
         source_domain=source_domain,
     )
 
-    if result.confidence < use_llm_threshold and os.getenv("ANTHROPIC_API_KEY"):
+    if result.confidence < use_llm_threshold and os.getenv("DEEPSEEK_API_KEY"):
         logger.info(
             f"Heuristic confidence thấp ({result.confidence:.2f}), "
             f"dùng LLM cho {meta.filepath.name}"

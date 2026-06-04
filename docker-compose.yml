@@ -6,6 +6,3 @@ services:
       - "8080:8080"
     volumes:
       - ./settings.yml:/etc/searxng/settings.yml
-
-
-network_mode: "host"

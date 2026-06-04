@@ -127,11 +127,11 @@ python3 main.py --searxng http://192.168.1.10:8080
 
 ### LLM fallback (tuỳ chọn)
 
-Khi heuristic classifier có confidence < 0.2, pipeline tự động gọi **Claude Haiku**
+Khi heuristic classifier có confidence < 0.2, pipeline tự động gọi **DeepSeek**
 để classify chính xác hơn. Cần set API key:
 
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
+export DEEPSEEK_API_KEY="sk-..."
 python3 main.py
 ```
 
@@ -364,7 +364,7 @@ vn-csv-crawler/
 | SearXNG bị Google block (429) | Tăng `--delay 30` hoặc dùng proxy |
 | Tải chậm | Tăng `concurrency` trong `FileDownloader` (default 5) |
 | Quá nhiều file rác lọt qua | Lọc theo `quality_score` trong catalog; điều chỉnh ngưỡng trong `validate_file` |
-| Classifier ra sai sub-category | Set `ANTHROPIC_API_KEY` để bật LLM fallback |
+| Classifier ra sai sub-category | Set `DEEPSEEK_API_KEY` để bật LLM fallback |
 | DB cũ không có cột mới | Migration chạy tự động khi `CatalogDB()` khởi động |
 | Muốn thêm trusted domain | Thêm vào `TRUSTED_FINANCE_DOMAINS` trong `queries.py` và `TRUSTED_DOMAINS` trong `classifier.py` |
 | Resume không hoạt động | Kiểm tra file `output/checked_queries.txt` có tồn tại không |
