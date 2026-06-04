@@ -56,6 +56,7 @@ class DownloadResult:
     error: str = ""
     topic: str = ""
     domain: str = ""
+    query: str = ""
 
 
 @dataclass
@@ -133,7 +134,7 @@ class FileDownloader:
     # ── core download ─────────────────────────────────────────────────────────
 
     async def download_one(
-        self, url: str, topic: str = "", domain: str = ""
+        self, url: str, topic: str = "", domain: str = "", query: str = ""
     ) -> DownloadResult:
         """Tải 1 file, validate, lưu disk. Trả về DownloadResult."""
         # ── Junk URL filter (no network) ──────────────────────────────────────
@@ -210,7 +211,7 @@ class FileDownloader:
                 return DownloadResult(
                     url=url, success=True, filepath=filepath,
                     content_hash=content_hash, filetype=ext,
-                    file_size=total, topic=topic, domain=domain,
+                    file_size=total, topic=topic, domain=domain, query=query,
                 )
 
             except httpx.HTTPStatusError as e:
@@ -245,7 +246,7 @@ class FileDownloader:
         async def _one(sr):
             async with sem:
                 return await self.download_one(
-                    url=sr.url, topic=sr.topic, domain=sr.domain
+                    url=sr.url, topic=sr.topic, domain=sr.domain, query=sr.query
                 )
 
         results = await asyncio.gather(*[_one(r) for r in search_results])

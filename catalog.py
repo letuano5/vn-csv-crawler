@@ -10,7 +10,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA = """
+_TABLE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     url             TEXT UNIQUE NOT NULL,
@@ -32,7 +32,9 @@ CREATE TABLE IF NOT EXISTS files (
     crawled_at      TEXT,
     valid           INTEGER     -- 0/1
 );
+"""
 
+_INDEX_SCHEMA = """
 CREATE INDEX IF NOT EXISTS idx_sub_category ON files(sub_category);
 CREATE INDEX IF NOT EXISTS idx_hash         ON files(content_hash);
 """
@@ -57,8 +59,9 @@ class CatalogDB:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        self._conn.executescript(SCHEMA)
+        self._conn.executescript(_TABLE_SCHEMA)
         self._migrate()
+        self._conn.executescript(_INDEX_SCHEMA)
         self._conn.commit()
         logger.info(f"CatalogDB opened: {db_path}")
 
@@ -107,7 +110,7 @@ class CatalogDB:
                     file_meta.quality_score,
                     classify_result.method,
                     download_result.domain,
-                    "",
+                    download_result.query,
                     datetime.utcnow().isoformat(),
                     int(file_meta.valid),
                 ),
