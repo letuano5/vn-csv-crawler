@@ -165,6 +165,7 @@ async def run_pipeline(
                 meta = validate_file(dl.filepath)
                 if not meta.valid:
                     logger.debug(f"  INVALID {dl.filepath.name}: {meta.error}")
+                    dl.filepath.unlink(missing_ok=True)
                     continue
 
                 # Quality gate
@@ -173,6 +174,7 @@ async def run_pipeline(
                         f"  LOW QUALITY {dl.filepath.name}: "
                         f"score={meta.quality_score:.2f} < {min_quality}"
                     )
+                    dl.filepath.unlink(missing_ok=True)
                     continue
                 validated_total += 1
 
