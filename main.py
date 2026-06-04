@@ -14,6 +14,9 @@ import random
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+load_dotenv()
+
 # ── Setup logging ─────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -51,6 +54,7 @@ async def run_pipeline(
     dry_run: bool = False,
     lang: str = "vi",
     delay: float = 15.0,
+    min_quality: float = 0.5,
 ):
     """
     Full pipeline:
@@ -160,6 +164,14 @@ async def run_pipeline(
                 if not meta.valid:
                     logger.debug(f"  INVALID {dl.filepath.name}: {meta.error}")
                     continue
+
+                # Quality gate
+                if meta.quality_score < min_quality:
+                    logger.debug(
+                        f"  LOW QUALITY {dl.filepath.name}: "
+                        f"score={meta.quality_score:.2f} < {min_quality}"
+                    )
+                    continue
                 validated_total += 1
 
                 # Classify
@@ -168,7 +180,7 @@ async def run_pipeline(
                 )
                 logger.info(
                     f"  {dl.filepath.name} → [{cls.topic}] "
-                    f"conf={cls.confidence:.2f} ({cls.method})"
+                    f"conf={cls.confidence:.2f} score={meta.quality_score:.2f} ({cls.method})"
                 )
 
                 # Save
@@ -237,6 +249,10 @@ def parse_args():
         help="Delay (giây) giữa các search request (default: 15.0)",
     )
     p.add_argument(
+        "--min-quality", type=float, default=0.5,
+        help="Ngưỡng quality_score tối thiểu để lưu file (0.0–1.0, default: 0.5)",
+    )
+    p.add_argument(
         "--dry-run", action="store_true",
         help="Chỉ in query, không tải file",
     )
@@ -254,4 +270,5 @@ if __name__ == "__main__":
         dry_run=args.dry_run,
         lang=args.lang,
         delay=args.delay,
+        min_quality=args.min_quality,
     ))
